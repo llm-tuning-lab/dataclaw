@@ -1,93 +1,337 @@
-# DataClaw
+# DataClaw — AGENTS.md
 
-Export Claude Code, Codex, Gemini CLI, OpenCode, and OpenClaw conversation history to Hugging Face.
+**Generated:** 2026-03-14  
+**Project:** DataClaw — Export coding agent conversations to Hugging Face  
+**Stack:** Python 3.10+ / pytest / ruff / mypy  
+**Status:** Active (v0.3.2)
 
-## THE RULE
+---
 
-**Every `dataclaw` command outputs `next_steps`. FOLLOW THEM.**
+## OVERVIEW
 
-Do not memorize the flow. Do not skip steps. Do not improvise.
-Run the command → read the output → follow `next_steps`. That's it.
+DataClaw is a CLI tool that exports conversation history from Claude Code, Codex, Gemini CLI, OpenCode, and OpenClaw to Hugging Face as structured JSONL datasets. It handles multi-source discovery, PII redaction, secret detection, and attestation-gated publishing.
 
-The CLI tracks your stage (1-4: auth → configure → review → done).
-`dataclaw export` (push) is **gated** — you must run `dataclaw confirm` first or it will refuse.
+**Core Features:**
+- Multi-source session discovery (Claude, Codex, Gemini, OpenCode, OpenClaw, Kimi, custom)
+- Automated secret detection (API keys, tokens, private keys, entropy analysis)
+- PII redaction (usernames, emails, custom strings)
+- Attestation-gated publishing (requires explicit user confirmation)
+- Hugging Face Hub integration (push/pull datasets)
+- JSON output with metadata (token counts, model info, timestamps)
 
-## Getting Started
+---
 
-Run `dataclaw status` (or `dataclaw prep` for full details) and follow the `next_steps`.
+## STRUCTURE
 
-## Output Format
-
-- `dataclaw prep`, `dataclaw config`, `dataclaw status`, and `dataclaw confirm` output pure JSON
-- `dataclaw export` outputs human-readable text followed by `---DATACLAW_JSON---` and a JSON block
-- Always parse the JSON and act on `next_steps`
-
-Key fields:
-- `stage` / `stage_number` / `total_stages` — where you are
-- `next_steps` — follow these in order
-- `next_command` — the single most important command to run next (null if user input needed first)
-
-## PII Audit (Stage 3)
-
-After `dataclaw export --no-push`, follow the `next_steps` in the JSON output. The flow is:
-
-1. **Ask the user their full name** — then grep the export for it
-2. **Run the pii_commands** from the JSON output and review results with the user
-3. **Ask the user what else to look for** — company names, client names, private URLs, other people's names, custom domains
-4. **Deep manual scan** — sample ~20 sessions (beginning, middle, end) and look for anything sensitive the regex missed
-5. **Fix and re-export** if anything found: `dataclaw config --redact "string"` then `dataclaw export --no-push`
-6. **Run `dataclaw confirm` with text attestations** — pass `--full-name`, `--attest-full-name`, `--attest-sensitive`, and `--attest-manual-scan`. It runs PII scan, verifies attestations, shows project breakdown, and unlocks pushing.
-7. **Push only after explicit user confirmation**: `dataclaw export --publish-attestation "User explicitly approved publishing to Hugging Face."`
-
-## Commands Reference
-
-```bash
-dataclaw status                            # Show current stage and next steps (JSON)
-dataclaw prep                              # Discover projects, check HF auth (JSON)
-dataclaw prep --source all                 # All sources (Claude + Codex + Gemini + OpenCode + OpenClaw)
-dataclaw prep --source claude              # Only Claude Code sessions
-dataclaw prep --source codex               # Only Codex sessions
-dataclaw prep --source gemini              # Only Gemini CLI sessions
-dataclaw prep --source opencode            # Only OpenCode sessions
-dataclaw prep --source openclaw            # Only OpenClaw sessions
-dataclaw confirm --full-name "NAME" --attest-full-name "..." --attest-sensitive "..." --attest-manual-scan "..." # Scan PII, verify attestations, unlock pushing (JSON)
-dataclaw confirm --file /path/to/file.jsonl --full-name "NAME" --attest-full-name "..." --attest-sensitive "..." --attest-manual-scan "..." # Confirm a specific export file
-dataclaw list                              # List all projects with exclusion status
-dataclaw list --source all                 # List all sources
-dataclaw list --source codex               # List only Codex projects
-dataclaw config                            # Show current config
-dataclaw config --repo user/my-dataset     # Set HF repo
-dataclaw config --source all               # REQUIRED source scope: claude|codex|gemini|opencode|openclaw|all
-dataclaw config --exclude "a,b"            # Add excluded projects (appends)
-dataclaw config --redact "str1,str2"       # Add strings to redact (appends)
-dataclaw config --redact-usernames "u1,u2" # Add usernames to anonymize (appends)
-dataclaw config --confirm-projects         # Mark project selection as confirmed
-dataclaw export --publish-attestation "..." # Export and push (requires dataclaw confirm first)
-dataclaw export --no-push                  # Export locally only
-dataclaw export --source all --no-push     # Export all sources locally
-dataclaw export --source codex --no-push   # Export only Codex sessions
-dataclaw export --source claude --no-push  # Export only Claude Code sessions
-dataclaw export --source gemini --no-push  # Export only Gemini CLI sessions
-dataclaw export --source opencode --no-push # Export only OpenCode sessions
-dataclaw export --source openclaw --no-push # Export only OpenClaw sessions
-dataclaw export --all-projects             # Include everything (ignore exclusions)
-dataclaw export --no-thinking              # Exclude extended thinking blocks
-dataclaw export -o /path/to/file.jsonl     # Custom output path
+```
+dataclaw/
+  pyproject.toml                    # Package config (ruff, mypy, pytest)
+  Makefile                          # Dev targets: test, lint, format, type-check, coverage
+  README.md                         # User guide + examples
+  AGENTS.md                         # This file (developer guide)
+  LICENSE                           # MIT
+  
+  dataclaw/
+    __init__.py                     # Version + public API
+    cli.py                          # Main CLI entry point (argparse)
+    parser.py                       # Multi-source session discovery + parsing
+    config.py                       # Config file management (YAML)
+    anonymizer.py                   # Username/path anonymization
+    secrets.py                      # Secret detection + redaction (regex + entropy)
+  
+  scripts/
+    export_kaidol_conversations.py  # KAIdol-specific export helper
+  
+  tests/
+    conftest.py                     # pytest fixtures
+    test_cli.py                     # CLI argument parsing + flow tests
+    test_parser.py                  # Session discovery + parsing tests
+    test_config.py                  # Config load/save tests
+    test_anonymizer.py              # Anonymization tests
+    test_secrets.py                 # Secret detection + redaction tests
+  
+  .github/workflows/
+    test.yml                        # CI: lint + type-check + test matrix (3.10-3.13)
+    publish.yml                     # CD: publish to PyPI on release
 ```
 
-## Gotchas
+---
 
-- **Never run bare `huggingface-cli login`** — it's interactive and will hang. Always use `--token`.
-- **`--exclude`, `--redact`, `--redact-usernames` APPEND** — they never overwrite. Safe to call repeatedly.
-- **Source selection is REQUIRED before export** — explicitly set `dataclaw config --source claude|codex|gemini|opencode|openclaw|all` (or pass `--source ...` on export).
-- **`dataclaw prep` outputs pure JSON** — parse it directly.
-- **Always export with `--no-push` first** — review before publishing.
-- **`dataclaw export` (push) requires `dataclaw confirm` first** — it will refuse otherwise. Re-exporting with `--no-push` resets this.
-- **PII audit is critical** — automated redaction is not foolproof.
-- **Large exports take time** — 500+ sessions may take 1-3 minutes. Use a generous timeout.
+## WHERE TO LOOK
 
-## Install
+| Task | File | Notes |
+|------|------|-------|
+| Add CLI command | `dataclaw/cli.py` | argparse subcommands: status, prep, list, config, confirm, export |
+| Add data source | `dataclaw/parser.py` | CLAUDE_DIR, CODEX_DIR, GEMINI_DIR, OPENCODE_DIR, OPENCLAW_DIR, KIMI_DIR, CUSTOM_DIR |
+| Add secret pattern | `dataclaw/secrets.py` | Regex patterns + entropy analysis for detection |
+| Add redaction rule | `dataclaw/anonymizer.py` | Username hashing, path anonymization |
+| Config schema | `dataclaw/config.py` | DataClawConfig dataclass, load/save YAML |
+| Test CLI flow | `tests/test_cli.py` | Stage transitions, attestation validation |
+| Test parsing | `tests/test_parser.py` | Session discovery, conversation reconstruction |
+
+---
+
+## KEY MODULES
+
+### cli.py (Main Entry Point)
+
+**Subcommands:**
+- `status` — Show current stage (1-4: auth → configure → review → done)
+- `prep` — Discover projects, check HF auth
+- `list` — List all projects with exclusion status
+- `config` — Show/update config (repo, source, excludes, redactions)
+- `confirm` — Scan PII, verify attestations, unlock pushing
+- `export` — Export locally or push to HF (gated by confirm)
+- `update-skill` — Install/update Claude Code skill
+
+**Output Format:**
+- `prep`, `config`, `status`, `confirm` → pure JSON
+- `export` → human-readable text + `---DATACLAW_JSON---` + JSON block
+- Always parse JSON and follow `next_steps`
+
+**Key Fields in JSON:**
+- `stage` / `stage_number` / `total_stages` — workflow position
+- `next_steps` — ordered list of actions
+- `next_command` — single most important command (null if user input needed)
+
+### parser.py (Multi-Source Discovery)
+
+**Supported Sources:**
+- `claude` — Claude Code sessions (~/.claude/projects/)
+- `codex` — Codex sessions (~/.codex/sessions/)
+- `gemini` — Gemini CLI sessions (~/.gemini/)
+- `opencode` — OpenCode sessions (~/.opencode/)
+- `openclaw` — OpenClaw sessions (~/.openclaw/)
+- `kimi` — Kimi CLI sessions (~/.kimi/)
+- `custom` — Custom JSONL files (user-provided)
+
+**Key Functions:**
+- `discover_projects(source)` — Find all projects for a source
+- `parse_project_sessions(project_path, source)` — Extract conversations
+- `Session` dataclass — Holds messages, metadata, token counts
+
+### secrets.py (Detection + Redaction)
+
+**Detection Methods:**
+1. **Regex patterns** — JWT, API keys (Anthropic, OpenAI, HF, GitHub, AWS), DB passwords, private keys, Discord webhooks
+2. **Entropy analysis** — Long high-entropy strings in quotes (potential secrets)
+3. **Email detection** — Personal email addresses
+
+**Redaction:**
+- `redact_text(text, config)` — Apply all redaction rules
+- `redact_session(session, config)` — Redact messages + tool calls
+- Custom strings + usernames from config
+
+### config.py (Configuration)
+
+**DataClawConfig:**
+- `repo` — HF repo (user/dataset-name)
+- `source` — Scope (claude|codex|gemini|opencode|openclaw|all)
+- `excluded_projects` — Projects to skip
+- `redact_strings` — Custom strings to redact
+- `redact_usernames` — Usernames to anonymize
+- `confirmed_projects` — User has reviewed project list
+
+**File Location:** `~/.dataclaw/config.yaml`
+
+### anonymizer.py (PII Anonymization)
+
+**Anonymization:**
+- Username hashing (stable hash for consistency)
+- Path anonymization (strip to project-relative)
+- Email redaction
+
+---
+
+## CONVENTIONS
+
+**Line length:** 120 chars (ruff)  
+**Target Python:** 3.10+  
+**Lint rules:** E, W, F, I, B, C4, UP (E501 ignored)  
+**Type checking:** mypy with `warn_return_any`, `warn_unused_configs`  
+**Testing:** pytest, `tests/` directory, 100% coverage target  
+**Package layout:** Flat (`dataclaw/` at root, not `src/`)  
+
+**Naming:**
+- CLI commands: lowercase, hyphenated (e.g., `--no-push`, `--full-name`)
+- Functions: snake_case
+- Classes: PascalCase
+- Constants: UPPER_SNAKE_CASE
+
+**JSON Output:**
+- Always include `stage`, `stage_number`, `total_stages`
+- Always include `next_steps` (list of strings)
+- Always include `next_command` (string or null)
+- Use ISO 8601 timestamps
+
+---
+
+## ANTI-PATTERNS
+
+- Do NOT use `# type: ignore` or `cast()` — fix the type error properly
+- Do NOT add runtime dependencies without updating `pyproject.toml`
+- Do NOT skip PII audit — automated redaction is not foolproof
+- Do NOT publish without explicit user confirmation (gated by `dataclaw confirm`)
+- Do NOT run bare `huggingface-cli login` — always use `--token`
+- Do NOT assume `--exclude`, `--redact`, `--redact-usernames` overwrite — they APPEND
+- Do NOT skip source selection — must be explicitly set before export
+
+---
+
+## COMMANDS
 
 ```bash
-pip install dataclaw
+# Run all tests
+make test
+
+# Lint + type check
+make check
+
+# Format code
+make format
+
+# Coverage report
+make coverage
+
+# Clean build artifacts
+make clean
+
+# Install in development mode
+pip install -e ".[dev]"
+
+# Run specific test
+pytest tests/test_cli.py -v
+
+# Run with coverage
+pytest tests/ --cov=dataclaw --cov-report=html
 ```
+
+---
+
+## DEVELOPMENT WORKFLOW
+
+### Adding a New Data Source
+
+1. **Add source constant** in `parser.py`:
+   ```python
+   MY_SOURCE = "my_source"
+   MY_DIR = Path.home() / ".my_source"
+   ```
+
+2. **Implement discovery** in `parser.py`:
+   ```python
+   def discover_projects_my_source() -> list[str]:
+       # Return list of project names
+   ```
+
+3. **Implement parsing** in `parser.py`:
+   ```python
+   def parse_my_source_sessions(project_path: Path) -> list[Session]:
+       # Return list of Session objects
+   ```
+
+4. **Update `discover_projects()`** to handle new source
+
+5. **Add tests** in `tests/test_parser.py`
+
+6. **Update CLI help** in `cli.py`
+
+### Adding a New Secret Pattern
+
+1. **Add regex pattern** in `secrets.py`:
+   ```python
+   PATTERNS = {
+       "my_secret": re.compile(r"pattern_here"),
+   }
+   ```
+
+2. **Add test cases** in `tests/test_secrets.py`
+
+3. **Document** in README.md
+
+### Adding a New CLI Command
+
+1. **Add subparser** in `cli.py`:
+   ```python
+   subparsers.add_parser("my_command", help="...")
+   ```
+
+2. **Implement handler** in `cli.py`:
+   ```python
+   def handle_my_command(args) -> dict[str, Any]:
+       # Return JSON output
+   ```
+
+3. **Add tests** in `tests/test_cli.py`
+
+4. **Update AGENTS.md** (this file)
+
+---
+
+## TESTING
+
+**Test Coverage:** 100% target  
+**Test Framework:** pytest  
+**Fixtures:** `conftest.py` provides temp directories, mock configs
+
+**Run Tests:**
+```bash
+# All tests
+pytest tests/ -v
+
+# Specific test file
+pytest tests/test_cli.py -v
+
+# Specific test
+pytest tests/test_cli.py::test_status_stage_1 -v
+
+# With coverage
+pytest tests/ --cov=dataclaw --cov-report=term-missing
+```
+
+**Test Organization:**
+- `test_cli.py` — CLI argument parsing, stage transitions, JSON output
+- `test_parser.py` — Session discovery, conversation reconstruction
+- `test_config.py` — Config load/save, validation
+- `test_anonymizer.py` — Username hashing, path anonymization
+- `test_secrets.py` — Secret detection, redaction
+
+---
+
+## CI/CD
+
+**GitHub Actions:**
+- `test.yml` — Lint + type-check + test matrix (Python 3.10-3.13)
+- `publish.yml` — Publish to PyPI on release
+
+**Triggers:**
+- `test.yml` — Push to main, pull requests
+- `publish.yml` — Release tags (v*)
+
+---
+
+## NOTES
+
+- **Version:** Managed in `dataclaw/__init__.py` and `pyproject.toml`
+- **Dependencies:** Minimal (huggingface_hub only)
+- **Dev dependencies:** pytest, mypy, ruff
+- **License:** MIT
+- **Repository:** https://github.com/banodoco/dataclaw
+- **PyPI:** https://pypi.org/project/dataclaw/
+
+---
+
+## GOTCHAS
+
+1. **Config file location** — `~/.dataclaw/config.yaml` (not in project root)
+2. **Source selection is required** — Must explicitly set before export
+3. **Attestations are gated** — `dataclaw confirm` must pass before `dataclaw export --publish-attestation`
+4. **PII audit is critical** — Automated redaction misses things; manual review required
+5. **Large exports take time** — 500+ sessions may take 1-3 minutes
+6. **HF token handling** — Always use `--token` flag, never interactive login
+
+---
+
+**Last Updated:** 2026-03-14  
+**Maintainer:** Banodoco  
+**Status:** Active Development
