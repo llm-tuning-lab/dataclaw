@@ -1,9 +1,10 @@
-"""Persistent config for DataClaw — stored at ~/.dataclaw/config.json"""
+"""Persistent config for DataClaw - stored at ~/.dataclaw/config.json"""
 
-import json
 import sys
 from pathlib import Path
 from typing import TypedDict, cast
+
+from . import _json as json
 
 CONFIG_DIR = Path.home() / ".dataclaw"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -37,8 +38,7 @@ DEFAULT_CONFIG: DataClawConfig = {
 def load_config() -> DataClawConfig:
     if CONFIG_FILE.exists():
         try:
-            with open(CONFIG_FILE) as f:
-                stored = json.load(f)
+            stored = json.loads(CONFIG_FILE.read_bytes())
             return cast(DataClawConfig, {**DEFAULT_CONFIG, **stored})
         except (json.JSONDecodeError, OSError) as e:
             print(f"Warning: could not read {CONFIG_FILE}: {e}", file=sys.stderr)
@@ -48,7 +48,6 @@ def load_config() -> DataClawConfig:
 def save_config(config: DataClawConfig) -> None:
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(config, f, indent=2)
+        CONFIG_FILE.write_bytes(json.dumps_bytes(config, indent=2))
     except OSError as e:
         print(f"Warning: could not save {CONFIG_FILE}: {e}", file=sys.stderr)

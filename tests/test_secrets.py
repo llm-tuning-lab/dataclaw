@@ -1,4 +1,4 @@
-"""Tests for dataclaw.secrets — secret detection and redaction."""
+"""Tests for dataclaw.secrets - secret detection and redaction."""
 
 import pytest
 
@@ -10,8 +10,8 @@ from dataclaw.secrets import (
     redact_session,
     redact_text,
     scan_text,
+    should_skip_large_binary_string,
 )
-
 
 # --- _shannon_entropy ---
 
@@ -200,6 +200,203 @@ class TestScanText:
         findings = scan_text(text)
         assert any(f["type"] == "high_entropy" for f in findings)
 
+    # -- google_api_key --
+
+    def test_google_api_key(self):
+        key = "AIzaSyA1B2C3D4E5F6G7H8I9J0KlMnOpQrStUvW"
+        assert len(key) == 39  # AIzaSy (6) + 33
+        findings = scan_text(f"key is {key}")
+        assert any(f["type"] == "google_api_key" for f in findings)
+
+    def test_google_api_key_in_url(self):
+        text = "https://generativelanguage.googleapis.com/v1beta/models?key=AIzaSyA1B2C3D4E5F6G7H8I9J0KlMnOpQrStUvW"
+        findings = scan_text(text)
+        assert any(f["type"] == "google_api_key" for f in findings)
+
+    def test_google_api_key_too_short(self):
+        key = "AIzaSyA1B2C3"  # only 8 chars after AIzaSy
+        findings = scan_text(key)
+        assert not any(f["type"] == "google_api_key" for f in findings)
+
+    # -- groq_key --
+
+    def test_groq_key(self):
+        key = "gsk_" + "a1B2c3D4e5F6g7H8i9J0k1L2"
+        findings = scan_text(f"GROQ_API_KEY={key}")
+        assert any(f["type"] == "groq_key" for f in findings)
+
+    def test_groq_key_short_rejected(self):
+        key = "gsk_abcdef"  # only 6 chars after prefix
+        findings = scan_text(key)
+        assert not any(f["type"] == "groq_key" for f in findings)
+
+    # -- telegram_token --
+
+    def test_telegram_token(self):
+        token = "1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
+        # 10-digit bot id + : + 35 chars
+        findings = scan_text(f"TELEGRAM_TOKEN={token}")
+        assert any(f["type"] == "telegram_token" for f in findings)
+
+    def test_telegram_token_8_digit_bot_id(self):
+        token = "12345678:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
+        findings = scan_text(token)
+        assert any(f["type"] == "telegram_token" for f in findings)
+
+    def test_telegram_token_too_few_digits(self):
+        token = "1234567:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"  # 7 digits
+        findings = scan_text(token)
+        assert not any(f["type"] == "telegram_token" for f in findings)
+
+    # -- flyio_token --
+
+    def test_flyio_token_fm1(self):
+        token = "fm1_" + "A" * 30
+        findings = scan_text(f"FLY_ACCESS_TOKEN={token}")
+        assert any(f["type"] == "flyio_token" for f in findings)
+
+    def test_flyio_token_fm2(self):
+        token = "fm2_lJkH8aBcDeFgHiJkLmNoPqRsTuVwXyZ"
+        findings = scan_text(token)
+        assert any(f["type"] == "flyio_token" for f in findings)
+
+    def test_flyio_token_wrong_prefix(self):
+        token = "fm3_" + "A" * 30
+        findings = scan_text(token)
+        assert not any(f["type"] == "flyio_token" for f in findings)
+
+    # -- eth_private_key --
+
+    def test_eth_private_key(self):
+        key = "0x" + "a1b2c3d4" * 8  # 64 hex chars
+        assert len(key) == 66
+        findings = scan_text(f"PRIVATE_KEY={key}")
+        assert any(f["type"] == "eth_private_key" for f in findings)
+
+    def test_eth_private_key_uppercase_hex(self):
+        key = "0x" + "A1B2C3D4" * 8
+        findings = scan_text(key)
+        assert any(f["type"] == "eth_private_key" for f in findings)
+
+    def test_eth_private_key_too_short(self):
+        key = "0x" + "ab" * 16  # only 32 hex chars
+        findings = scan_text(key)
+        assert not any(f["type"] == "eth_private_key" for f in findings)
+
+    # -- password_value --
+
+    def test_password_equals_value(self):
+        text = "password=Xk9mW2pL4qR7nB3v"
+        findings = scan_text(text)
+        assert any(f["type"] == "password_value" for f in findings)
+
+    def test_password_colon_value(self):
+        text = "password: Xk9mW2pL4qR7nB3v"
+        findings = scan_text(text)
+        assert any(f["type"] == "password_value" for f in findings)
+
+    def test_passwd_variant(self):
+        text = "passwd=Xk9mW2pL4qR7nB3v"
+        findings = scan_text(text)
+        assert any(f["type"] == "password_value" for f in findings)
+
+    def test_chinese_password_keyword(self):
+        text = "密码 Xk9mW2pL4qR7nB3v"
+        findings = scan_text(text)
+        assert any(f["type"] == "password_value" for f in findings)
+
+    def test_password_on_next_line(self):
+        text = "password:\n  Xk9mW2pL4qR7nB3v"
+        findings = scan_text(text)
+        assert any(f["type"] == "password_value" for f in findings)
+
+    def test_password_value_too_short(self):
+        text = "password=abc123"  # only 6 chars, below 16 min
+        findings = scan_text(text)
+        assert not any(f["type"] == "password_value" for f in findings)
+
+    def test_password_case_insensitive(self):
+        text = "PASSWORD=Xk9mW2pL4qR7nB3v"
+        findings = scan_text(text)
+        assert any(f["type"] == "password_value" for f in findings)
+
+    # -- aws_secret (suffixed name fix) --
+
+    def test_aws_secret_suffixed_name(self):
+        text = "AWS_SECRET_ACCESS_KEY_GUTENBERG = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+        findings = scan_text(text)
+        assert any(f["type"] == "aws_secret" for f in findings)
+
+    def test_aws_secret_lowercase(self):
+        text = "aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+        findings = scan_text(text)
+        assert any(f["type"] == "aws_secret" for f in findings)
+
+    # -- url_token (hyphenated param fix) --
+
+    def test_url_token_api_hyphen_key(self):
+        text = "https://api.example.com?api-key=aB3xZ9qR2mK7pL4w"
+        findings = scan_text(text)
+        assert any(f["type"] == "url_token" for f in findings)
+
+    def test_url_token_access_hyphen_token(self):
+        text = "https://api.example.com?access-token=aB3xZ9qR2mK7pL4w"
+        findings = scan_text(text)
+        assert any(f["type"] == "url_token" for f in findings)
+
+    # -- bearer (non-JWT token fix) --
+
+    def test_bearer_non_jwt_token(self):
+        text = "Authorization: Bearer gsk_a1B2c3D4e5F6g7H8i9J0k1"
+        findings = scan_text(text)
+        assert any(f["type"] in ("bearer", "groq_key") for f in findings)
+
+    def test_bearer_plain_opaque_token(self):
+        token = "xY9kL2mN4pQ7rS0tU3vW5aB8cD1eF6gH"
+        text = f"Authorization: Bearer {token}"
+        findings = scan_text(text)
+        assert any(f["type"] == "bearer" for f in findings)
+
+    # -- env_secret (PRIVATE_KEY fix) --
+
+    def test_env_secret_private_key(self):
+        text = "PRIVATE_KEY=mySuperSecretKeyValue123"
+        findings = scan_text(text)
+        assert any(f["type"] == "env_secret" for f in findings)
+
+    def test_env_secret_supabase_key(self):
+        text = "SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+        findings = scan_text(text)
+        assert any(f["type"] == "env_secret" for f in findings)
+
+    # -- generic_secret (JSON-quoted keys, token key name, min length fix) --
+
+    def test_generic_secret_json_quoted_key(self):
+        text = '"apiKey": "aB3xZ9qR2mK7pL4w"'
+        findings = scan_text(text)
+        assert any(f["type"] == "generic_secret" for f in findings)
+
+    def test_generic_secret_json_single_quoted(self):
+        text = "'api_key': 'aB3xZ9qR2mK7pL4w'"
+        findings = scan_text(text)
+        assert any(f["type"] == "generic_secret" for f in findings)
+
+    def test_generic_secret_token_key_name(self):
+        text = 'token = "aB3xZ9qR2mK7pL4w"'
+        findings = scan_text(text)
+        assert any(f["type"] == "generic_secret" for f in findings)
+
+    def test_generic_secret_16_char_value(self):
+        # min length was lowered from 20 to 16
+        text = 'api_key = "aB3xZ9qR2mK7pL4w"'  # exactly 16 chars
+        findings = scan_text(text)
+        assert any(f["type"] == "generic_secret" for f in findings)
+
+    def test_generic_secret_15_char_rejected(self):
+        text = 'api_key = "aB3xZ9qR2mK7pL4"'  # 15 chars - too short
+        findings = scan_text(text)
+        assert not any(f["type"] == "generic_secret" for f in findings)
+
 
 # --- Allowlist ---
 
@@ -309,6 +506,43 @@ class TestRedactText:
         assert result is None
         assert count == 0
 
+    def test_redact_google_api_key(self):
+        key = "AIzaSyA1B2C3D4E5F6G7H8I9J0KlMnOpQrStUvW"
+        result, count = redact_text(f"key={key}")
+        assert key not in result
+        assert REDACTED in result
+        assert count >= 1
+
+    def test_redact_groq_key(self):
+        key = "gsk_a1B2c3D4e5F6g7H8i9J0k1L2"
+        result, count = redact_text(key)
+        assert key not in result
+        assert count >= 1
+
+    def test_redact_telegram_token(self):
+        token = "1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
+        result, count = redact_text(f"token: {token}")
+        assert token not in result
+        assert count >= 1
+
+    def test_redact_flyio_token(self):
+        token = "fm2_lJkH8aBcDeFgHiJkLmNoPqRsTuVwXyZ"
+        result, count = redact_text(token)
+        assert token not in result
+        assert count >= 1
+
+    def test_redact_eth_private_key(self):
+        key = "0x" + "a1b2c3d4" * 8
+        result, count = redact_text(f"key={key}")
+        assert key not in result
+        assert count >= 1
+
+    def test_redact_password_value(self):
+        text = "password=Xk9mW2pL4qR7nB3v"
+        result, count = redact_text(text)
+        assert "Xk9mW2pL4qR7nB3v" not in result
+        assert count >= 1
+
 
 # --- redact_custom_strings ---
 
@@ -335,9 +569,7 @@ class TestRedactCustomStrings:
         assert count == 1
 
     def test_multiple_replacements(self):
-        result, count = redact_custom_strings(
-            "foo myname bar myname baz", ["myname"]
-        )
+        result, count = redact_custom_strings("foo myname bar myname baz", ["myname"])
         assert "myname" not in result
         assert count == 2
 
@@ -428,4 +660,65 @@ class TestRedactSession:
             ]
         }
         result, count = redact_session(session)
+        assert count == 0
+
+    def test_redacts_content_parts_and_preserves_blob_payloads(self):
+        blob = "data:image/png;base64," + ("A" * 5000)
+        session = {
+            "messages": [
+                {
+                    "content_parts": [
+                        {"type": "tool_result", "content": "Key: sk-ant-api03-abcdefghijklmnopqrstuvwxyz"},
+                        {"type": "image", "source": {"type": "base64", "data": blob}},
+                    ]
+                }
+            ]
+        }
+        result, count = redact_session(session)
+        assert REDACTED in result["messages"][0]["content_parts"][0]["content"]
+        assert result["messages"][0]["content_parts"][1]["source"]["data"] == blob
+        assert count >= 1
+
+
+class TestLargeBinarySkipping:
+    def test_detects_large_base64_blob(self):
+        blob = "A" * 5000
+        assert should_skip_large_binary_string(blob) is True
+
+    def test_allows_large_ansi_terminal_output(self):
+        text = (
+            "Exit code 1\n"
+            + "\x1b[92mSuccessfully preprocessed all matching files.\x1b[0m\n"
+            + ("Traceback line with context\n" * 250)
+            + "sk-ant-abcdefghijklmnopqrstuvwxyz123456\n"
+        )
+        assert len(text) > 4096
+        assert should_skip_large_binary_string(text) is False
+        result, count = redact_text(text)
+        assert count >= 1
+        assert REDACTED in result
+
+    def test_redact_text_skips_large_base64_blob(self):
+        blob = "A" * 5000
+        result, count = redact_text(blob)
+        assert result == blob
+        assert count == 0
+
+    def test_redact_session_skips_large_base64_in_tool_output(self):
+        blob = "A" * 5000
+        session = {
+            "messages": [
+                {
+                    "tool_uses": [
+                        {
+                            "output": {
+                                "raw": {"content": [{"type": "image", "source": {"type": "base64", "data": blob}}]}
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        result, count = redact_session(session)
+        assert result["messages"][0]["tool_uses"][0]["output"]["raw"]["content"][0]["source"]["data"] == blob
         assert count == 0

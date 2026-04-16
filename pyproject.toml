@@ -1,13 +1,14 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=77.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "dataclaw"
-version = "0.3.2"
+version = "0.4.0"
 description = "Export your coding agent conversations to Hugging Face as structured data"
 requires-python = ">=3.10"
 license = "MIT"
+license-files = ["LICENSE"]
 readme = "README.md"
 authors = [
     {name = "Banodoco"},
@@ -17,14 +18,11 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Topic :: Software Development :: Libraries",
+    "Topic :: System :: Archiving",
 ]
 dependencies = [
-    "huggingface_hub>=0.20.0",
+    "huggingface_hub>=0.35.0",
+    "orjson>=3.0.0",
 ]
 
 [project.urls]
@@ -36,29 +34,13 @@ Issues = "https://github.com/banodoco/dataclaw/issues"
 dataclaw = "dataclaw.cli:main"
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8.0.0",
-    "mypy>=1.8.0",
-    "ruff>=0.2.0",
-]
-
-[tool.setuptools.packages.find]
-where = ["."]
+dev = ["pre-commit", "pytest", "ruff"]
 
 [tool.ruff]
-target-version = "py310"
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "I", "B", "C4", "UP"]
-ignore = ["E501"]
+extend-select = ["I"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_functions = ["test_*"]
-
-[tool.mypy]
-python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401"]
